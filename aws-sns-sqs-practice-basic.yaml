@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'filter log from lambda,then triggered alarm to sns'
+Resources:
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SampleSQSPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ChangeMessageVisibility
+                  - sqs:DeleteMessage
+                  - sqs:SendMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ReceiveMessage
+                Resource: !GetAtt 'HhyQueue.Arn'
+  ProcessSNSSubscriptionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: functon for sns to trigger
+      FunctionName: ProcessSNSSubscriptionFunction
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Role: !GetAtt 'LambdaRole.Arn'
+      Timeout: 240
+      Code:
+        ZipFile: |
+          import json
+
+          def lambda_handler(event, context):
+              # TODO implement
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Hello from Lambda!')
+              }
+  ProcessSQSSubscriptionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: functon for sqs to trigger
+      FunctionName: ProcessSQSSubscriptionFunction
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Role: !GetAtt 'LambdaRole.Arn'
+      Code:
+        ZipFile: |
+          import json
+
+          def lambda_handler(event, context):
+              # TODO implement
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Hello from Lambda!')
+              }
+  TriggerSNSSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: TriggerSNSSchedule
+      Description: "rule triggered every 5 minutes to sns"
+      ScheduleExpression: "cron(0/5 * * * ? *)"
+      State: "ENABLED"
+      Targets:
+        - Arn:
+            Ref: "CloudWatchEventTriggeredSNSTopic"
+          Id: "OpsTopic"
+  # The EventTopicPolicy resource grants Amazon EventBridge permission to notify the associated Amazon SNS topic.
+  EventTopicPolicy:
+    Type: 'AWS::SNS::TopicPolicy'
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: 'sns:Publish'
+            Resource: '*'
+      Topics:
+        - !Ref CloudWatchEventTriggeredSNSTopic
+  CloudWatchEventTriggeredSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: CloudWatchEventTriggeredSNSTopic
+      Subscription:
+        - Endpoint: huiyi.han@thoughtworks.com
+          Protocol: email
+        - Endpoint: !GetAtt HhyQueue.Arn
+          Protocol: sqs
+        - Endpoint: !GetAtt ProcessSNSSubscriptionFunction.Arn
+          Protocol: lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref CloudWatchEventTriggeredSNSTopic
+      FunctionName: !Ref ProcessSNSSubscriptionFunction
+  HhyQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: "HhyQueue"
+  HhyEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt 'HhyQueue.Arn'
+      FunctionName: !GetAtt 'ProcessSQSSubscriptionFunction.Arn'
